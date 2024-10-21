@@ -2,6 +2,10 @@ AWSTemplateFormatVersion: '2010-09-09'
 Description: Template to deploy a VPC with 2 public and 2 private subnets, Auto Scaling Group behind a Load Balancer, RDS, S3, and necessary IAM roles and policies.
 
 Parameters:
+  ############################# Parameters #############################
+  # This section defines the parameters for the CloudFormation stack.
+  # You can customize the project name, database credentials, and S3 bucket name.
+
   ProjectName:
     Description: Project name used as prefix for resources
     Type: String
@@ -29,6 +33,10 @@ Parameters:
     Default: mybucket
 
 Resources:
+  ############################# Resources #############################
+  # This section defines the resources to be created in the CloudFormation stack.
+  # It includes the VPC, subnets, security groups, load balancer, RDS instance, S3 bucket, and IAM roles.
+
   ############################ VPC and Subnets ############################
   VPC:
     Type: AWS::EC2::VPC
@@ -87,7 +95,7 @@ Resources:
   ############################ Internet Gateway and Routes ############################
   InternetGateway:
     Type: AWS::EC2::InternetGateway
-    # Tags removed as InternetGateway does not support tags
+    # The Internet Gateway enables communication between the VPC and the internet.
 
   VPCGatewayAttachment:
     Type: AWS::EC2::VPCGatewayAttachment
@@ -162,7 +170,6 @@ Resources:
     Properties:
       AllocationId: !GetAtt NATGatewayEIP.AllocationId
       SubnetId: !Ref PublicSubnet1
-    
 
   ############################ Security Groups ############################
   EC2SecurityGroup:
@@ -223,6 +230,10 @@ Resources:
       Port: 80
       HealthCheckProtocol: HTTP
       HealthCheckPath: /
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
       TargetType: instance
 
   LoadBalancerListener:
@@ -238,116 +249,99 @@ Resources:
   ############################ S3 Bucket ############################
   S3Bucket:
     Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
     Properties:
+      AccessControl: BucketOwnerFullControl
       BucketName: !Ref S3BucketName
-    # Tags removed as S3 Bucket doesn't have tags in resource properties section
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerPreferred
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+
+  S3BucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref S3Bucket
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Action:
+              - s3:PutObject
+              - s3:GetObject
+            Resource: !Sub "${S3Bucket.Arn}/*"
+            Principal: "*"
 
   ############################ RDS Instance ############################
-  RDSDBInstance:
+  RDSInstance:
     Type: AWS::RDS::DBInstance
-    Properties: 
-      DBInstanceClass: db.t3.micro
+    Properties:
+      DBInstanceIdentifier: !Sub "${ProjectName}-db"
+      AllocatedStorage: '20'
+      DBInstanceClass: db.t2.micro
       Engine: mysql
-      AllocatedStorage: 20
-      DBName: !Ref DatabaseName
       MasterUsername: !Ref DBUsername
       MasterUserPassword: !Ref DBPassword
+      DBName: !Ref DatabaseName
       VPCSecurityGroups:
         - !Ref RDSSecurityGroup
       MultiAZ: false
       PubliclyAccessible: false
-      DBSubnetGroupName: !Ref RDSDBSubnetGroup
-
-  RDSDBSubnetGroup:
-    Type: AWS::RDS::DBSubnetGroup
-    Properties:
-      DBSubnetGroupDescription: Subnets for RDS DB
-      SubnetIds:
-        - !Ref PrivateSubnet1
-        - !Ref PrivateSubnet2
-
-  ############################ IAM Role for EC2 ############################
-  EC2Role:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: ec2.amazonaws.com
-            Action: sts:AssumeRole
-      Policies:
-        - PolicyName: S3AccessPolicy
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - s3:ListBucket
-                  - s3:GetObject
-                  - s3:PutObject
-                Resource: !Sub "arn:aws:s3:::${S3BucketName}/*"
-
-  EC2InstanceProfile:
-    Type: AWS::IAM::InstanceProfile
-    Properties:
-      Roles:
-        - !Ref EC2Role
-
-  ############################ EC2 Instances ############################
-  LaunchTemplate:
-    Type: AWS::EC2::LaunchTemplate
-    Properties:
-      LaunchTemplateName: !Sub "${ProjectName}-LaunchTemplate"
-      LaunchTemplateData:
-        InstanceType: t2.micro
-        ImageId: ami-0866a3c8686eaeeba
-        IamInstanceProfile:
-          Arn: !GetAtt EC2InstanceProfile.Arn
-        SecurityGroupIds:
-          - !Ref EC2SecurityGroup
-
-
-
-
+      StorageType: gp2
 
   ############################ Auto Scaling Group ############################
+  LaunchConfiguration:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      InstanceType: t2.micro
+      ImageId: ami-12345678  # Update with the appropriate AMI ID
+      SecurityGroups:
+        - !Ref EC2SecurityGroup
+      UserData: 
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          echo "Hello World" > index.html
+          nohup python -m SimpleHTTPServer 80 &
 
   AutoScalingGroup:
     Type: AWS::AutoScaling::AutoScalingGroup
     Properties:
+      MinSize: '2'
+      MaxSize: '3'
+      DesiredCapacity: '2'
       VPCZoneIdentifier:
         - !Ref PrivateSubnet1
         - !Ref PrivateSubnet2
-      LaunchTemplate:
-        LaunchTemplateId: !Ref LaunchTemplate
-        Version: !GetAtt LaunchTemplate.LatestVersionNumber
-      MinSize: 2
-      MaxSize: 3
-      DesiredCapacity: 2
-      HealthCheckType: EC2
-      HealthCheckGracePeriod: 300
+      LaunchConfigurationName: !Ref LaunchConfiguration
+      HealthCheckType: ELB
+      HealthCheckGracePeriod: 300  # 5 minutes grace period
 
+  ############################ Outputs ############################
+  Outputs:
+    ############################ Output Values ############################
+    # This section provides output values for important information such as
+    # RDS database credentials and Load Balancer DNS URL.
 
-  ############################# Outputs ##############################
-Outputs:
-  LoadBalancerDNS:
-    Description: The DNS name of the Load Balancer
-    Value: !GetAtt LoadBalancer.DNSName
+    DBUsername:
+      Description: RDS Database Username
+      Value: !Ref DBUsername
 
-  RDSInstanceEndpoint:
-    Description: The endpoint of the RDS instance
-    Value: !GetAtt RDSDBInstance.Endpoint.Address
+    DBPassword:
+      Description: RDS Database Password
+      Value: !Ref DBPassword
 
-  RDSInstanceUsername:
-    Description: The username for the RDS instance
-    Value: !Ref DBUsername
+    RDSInstanceIdentifier:
+      Description: RDS Instance Identifier
+      Value: !Ref RDSInstance
 
-  RDSInstancePassword:
-    Description: The password for the RDS instance
-    Value: !Ref DBPassword
+    LoadBalancerDNS:
+      Description: Load Balancer DNS Name
+      Value: !GetAtt LoadBalancer.DNSName
 
-  S3BucketNameOutput:
-    Description: The name of the S3 bucket
-    Value: !Ref S3BucketName
+    S3BucketName:
+      Description: S3 Bucket Name
+      Value: !Ref S3Bucket
+

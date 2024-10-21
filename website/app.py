@@ -7,7 +7,7 @@ app = Flask(__name__)
 app.secret_key = 'supersecretkey'  # For flash messages
 
 # S3 and RDS configuration (Update with your values or environment variables)
-s3 = boto3.client('s3', region_name='your-region')
+s3 = boto3.client('s3')
 rds_host = "your-rds-endpoint"
 rds_user = "your-username"
 rds_password = "your-password"
